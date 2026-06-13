@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+
+# Databases — keep example.db, ignore everything else
+*.db
+!example.db
+
+# Logs
+*.log
+
+# Claude Code session data
+.claude/

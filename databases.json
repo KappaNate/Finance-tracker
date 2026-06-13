@@ -1,0 +1,9 @@
+{
+  "active": "example.db",
+  "databases": [
+    {
+      "name": "Example",
+      "file": "example.db"
+    }
+  ]
+}
