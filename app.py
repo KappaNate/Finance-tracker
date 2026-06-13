@@ -9,7 +9,7 @@ import os
 import sys
 import calendar
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 def resource_path(relative_path):
     """Get absolute path — works for dev and PyInstaller bundles."""
