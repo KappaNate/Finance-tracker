@@ -13,5 +13,11 @@ venv/
 # Logs
 *.log
 
+# PyInstaller output
+dist/
+build/
+*.spec
+installer/
+
 # Claude Code session data
 .claude/

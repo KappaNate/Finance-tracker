@@ -609,13 +609,12 @@ input::placeholder { color: var(--text-muted); }
   justify-content: center;
 }
 .gear-btn:hover { color: var(--accent); background: var(--bg-panel); }
-.gear-dropdown-wrap .gear-btn { padding-bottom: 4px; }
 .gear-dropdown-wrap .gear-dropdown {
   display: none;
   flex-direction: column;
   position: absolute;
   right: 0;
-  top: 100%;
+  top: calc(100% - 4px);
   background: var(--bg-panel);
   border: 1px solid var(--border-inner);
   border-radius: 8px;
@@ -640,15 +639,25 @@ input::placeholder { color: var(--text-muted); }
 .gear-dropdown-item:hover { background: var(--bg-row-hover); }
 
 /* User guide modal */
-.guide-body { display: flex; flex-direction: column; gap: 18px; margin-top: 12px; }
+.guide-body { display: flex; flex-direction: column; gap: 0; margin-top: 12px; }
+.guide-section { border-bottom: 1px solid var(--border-inner); padding: 10px 0; }
+.guide-section:first-child { border-top: 1px solid var(--border-inner); }
 .guide-section h4 {
   font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--accent);
-  margin: 0 0 6px 0;
+  margin: 0;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
+.guide-section h4:hover { opacity: 0.8; }
+.guide-arrow { font-size: 9px; transition: transform 0.15s; flex-shrink: 0; }
+.guide-section-body { margin-top: 8px; }
 .guide-section p, .guide-section ul {
   font-size: 13px;
   color: var(--text-secondary);

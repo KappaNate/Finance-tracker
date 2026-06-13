@@ -73,6 +73,7 @@
           <div class="gear-dropdown">
             <button class="gear-dropdown-item" onclick="openModal('modal-settings')">Settings</button>
             <button class="gear-dropdown-item" onclick="openModal('modal-export')">Report Generator</button>
+            <button class="gear-dropdown-item" onclick="openModal('modal-about')">About</button>
           </div>
         </div>
       </div>
@@ -1805,6 +1806,24 @@
     </div>
   </div>
   <div id="cal-tooltip" class="cal-tooltip"></div>
+
+  <div id="modal-about" class="modal-overlay hidden" onclick="closeOnOverlay(event,'modal-about')">
+    <div class="modal">
+      <h3>About Finance Tracker</h3>
+      <div style="text-align:center;padding:16px 0 8px">
+        <div style="font-size:2rem;margin-bottom:8px">💰</div>
+        <div style="font-size:1.1rem;font-weight:600;margin-bottom:4px">Finance Tracker</div>
+        <div style="color:var(--text-muted);font-size:0.85rem">Version {{ app_version }}</div>
+      </div>
+      <div style="border-top:1px solid var(--border-inner);margin-top:12px;padding-top:12px;text-align:center;color:var(--text-muted);font-size:0.8rem;line-height:1.7">
+        <div>Copyright &copy; 2026 KappaNate</div>
+        <div>Released under the MIT License</div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeModal('modal-about')">Close</button>
+      </div>
+    </div>
+  </div>
 
   <div id="modal-user-guide" class="modal-overlay hidden" onclick="closeOnOverlay(event,'modal-user-guide')">
     <div class="modal modal-wide">
@@ -3632,6 +3651,27 @@
     function hideCalTip() {
       document.getElementById('cal-tooltip').style.display = 'none';
     }
+
+    (function() {
+      document.querySelectorAll('#modal-user-guide .guide-section').forEach(function(section) {
+        const h4 = section.querySelector('h4');
+        if (!h4) return;
+        const arrow = document.createElement('span');
+        arrow.className = 'guide-arrow';
+        arrow.textContent = '▶';
+        h4.prepend(arrow);
+        const body = document.createElement('div');
+        body.className = 'guide-section-body';
+        while (h4.nextSibling) body.appendChild(h4.nextSibling);
+        section.appendChild(body);
+        body.style.display = 'none';
+        h4.addEventListener('click', function() {
+          const open = body.style.display !== 'none';
+          body.style.display = open ? 'none' : 'block';
+          arrow.style.transform = open ? '' : 'rotate(90deg)';
+        });
+      });
+    })();
 
     if (!localStorage.getItem('budget_guide_seen')) {
       localStorage.setItem('budget_guide_seen', '1');

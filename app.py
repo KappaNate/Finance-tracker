@@ -6,9 +6,22 @@ import export as exp
 from datetime import datetime, date
 import sqlite3
 import os
+import sys
 import calendar
 
-app = Flask(__name__)
+APP_VERSION = "1.0.0"
+
+def resource_path(relative_path):
+    """Get absolute path — works for dev and PyInstaller bundles."""
+    base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative_path)
+
+app = Flask(
+    __name__,
+    template_folder=resource_path('templates'),
+    static_folder=resource_path('static'),
+)
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 def _activate_db():
     active_file = db_manager.get_active_file()
@@ -620,6 +633,7 @@ def index():
         active_db_file=active_db_file,
         active_db_path=active_db_path,
         calendar_events=calendar_events,
+        app_version=APP_VERSION,
     )
 
 # ── Notes API ────────────────────────────────────────────────────────────────
@@ -1224,6 +1238,25 @@ def edit_category_full():
     ))
 
 if __name__ == "__main__":
-    import os
+    import threading, webbrowser, pystray
+    from PIL import Image as PILImage
+
     port = int(os.environ.get("PORT", 5000))
-    app.run(debug=True, port=port)
+
+    def open_browser():
+        webbrowser.open(f'http://127.0.0.1:{port}')
+
+    def on_quit(icon, item):
+        icon.stop()
+        os._exit(0)
+
+    tray_image = PILImage.open(resource_path('icon.ico'))
+    menu = pystray.Menu(
+        pystray.MenuItem('Open Finance Tracker', lambda icon, item: open_browser(), default=True),
+        pystray.MenuItem('Quit', on_quit),
+    )
+    tray = pystray.Icon('Finance Tracker', tray_image, 'Finance Tracker', menu)
+
+    threading.Thread(target=lambda: app.run(debug=False, port=port), daemon=True).start()
+    threading.Timer(1.0, open_browser).start()
+    tray.run()

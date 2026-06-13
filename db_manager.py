@@ -5,8 +5,17 @@ State is persisted to databases.json in the app folder.
 
 import json
 import os
+import sys
 
-REGISTRY = os.path.join(os.path.dirname(__file__), "databases.json")
+def _app_dir():
+    """Return AppData\Roaming\BudgetApp (frozen) or the project folder (dev)."""
+    if getattr(sys, 'frozen', False):
+        data_dir = os.path.join(os.environ.get('APPDATA', os.path.dirname(sys.executable)), 'Finance Tracker')
+        os.makedirs(data_dir, exist_ok=True)
+        return data_dir
+    return os.path.dirname(os.path.abspath(__file__))
+
+REGISTRY = os.path.join(_app_dir(), "databases.json")
 
 def _load():
     if not os.path.exists(REGISTRY):
@@ -67,4 +76,4 @@ def rename(file, new_name):
     _save(data)
 
 def get_db_path(file):
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), file))
+    return os.path.abspath(os.path.join(_app_dir(), file))
