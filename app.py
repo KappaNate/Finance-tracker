@@ -7,6 +7,7 @@ from datetime import datetime, date
 import sqlite3
 import os
 import sys
+import threading
 import calendar
 
 APP_VERSION = "1.1.0"
@@ -53,6 +54,10 @@ def get_viewed_month(req):
     except (ValueError, TypeError):
         year, month = now.year, now.month
     return year, month
+
+@app.route("/favicon.ico")
+def favicon():
+    return send_file(resource_path('icon.ico'), mimetype='image/x-icon')
 
 @app.route("/")
 def index():
@@ -1237,26 +1242,170 @@ def edit_category_full():
         open=request.form.get("open", "")
     ))
 
+
 if __name__ == "__main__":
-    import threading, webbrowser, pystray
-    from PIL import Image as PILImage
+    import threading
+    import webview
 
     port = int(os.environ.get("PORT", 5000))
 
-    def open_browser():
-        webbrowser.open(f'http://127.0.0.1:{port}')
+    class WindowAPI:
+        def __init__(self):
+            self._win = None
+            self._maximized = False
 
-    def on_quit(icon, item):
-        icon.stop()
-        os._exit(0)
+        def set_window(self, win):
+            self._win = win
 
-    tray_image = PILImage.open(resource_path('icon.ico'))
-    menu = pystray.Menu(
-        pystray.MenuItem('Open Finance Tracker', lambda icon, item: open_browser(), default=True),
-        pystray.MenuItem('Quit', on_quit),
+        def minimize(self):
+            if self._win:
+                self._win.minimize()
+
+        def toggle_maximize(self):
+            if not self._win:
+                return
+            if self._maximized:
+                self._win.restore()
+                self._maximized = False
+            else:
+                self._win.maximize()
+                self._maximized = True
+
+        def close(self):
+            if self._win:
+                self._win.destroy()
+
+        def start_drag(self):
+            import ctypes
+            hwnd = ctypes.windll.user32.FindWindowW(None, 'Finance Tracker')
+            if hwnd:
+                ctypes.windll.user32.ReleaseCapture()
+                ctypes.windll.user32.SendMessageW(hwnd, 0x00A1, 2, 0)
+
+    api = WindowAPI()
+
+    threading.Thread(
+        target=lambda: app.run(debug=False, port=port, use_reloader=False),
+        daemon=True
+    ).start()
+
+    import time
+    time.sleep(1.0)
+
+    def set_window_icon():
+        import ctypes, time
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('FinanceTracker.App')
+        time.sleep(1.5)
+        icon_path = resource_path('icon.ico')
+        if not os.path.exists(icon_path):
+            return
+        try:
+            user32 = ctypes.windll.user32
+            hIconBig   = user32.LoadImageW(None, icon_path, 1, 32, 32, 0x10)
+            hIconSmall = user32.LoadImageW(None, icon_path, 1, 16, 16, 0x10)
+            hwnd = user32.FindWindowW(None, 'Finance Tracker')
+            if hwnd:
+                user32.SendMessageW(hwnd, 0x0080, 0, hIconSmall)
+                user32.SendMessageW(hwnd, 0x0080, 1, hIconBig)
+                user32.SetClassLongPtrW(hwnd, -14, hIconBig)
+                user32.SetClassLongPtrW(hwnd, -34, hIconSmall)
+                # Re-enable resize/maximize since frameless removes them
+                GWL_STYLE = -16
+                cur_style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+                user32.SetWindowLongW(hwnd, GWL_STYLE, cur_style | 0x00070000)
+                user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0027)
+        except Exception:
+            pass
+
+    def fix_border():
+        import ctypes, ctypes.wintypes, time
+        from ctypes import wintypes
+        time.sleep(0.2)
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, 'Finance Tracker')
+            if not hwnd:
+                return
+
+            WM_ERASEBKGND = 0x0014
+            WM_NCCALCSIZE = 0x0083
+            WM_NCHITTEST  = 0x0084
+            GWL_WNDPROC   = -4
+            RESIZE_BORDER = 8
+            HTCLIENT  = 1
+            HTLEFT, HTRIGHT = 10, 11
+            HTTOP, HTTOPLEFT, HTTOPRIGHT = 12, 13, 14
+            HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT = 15, 16, 17
+
+            WNDPROCTYPE = ctypes.WINFUNCTYPE(
+                ctypes.c_long,
+                wintypes.HWND, wintypes.UINT,
+                wintypes.WPARAM, wintypes.LPARAM,
+            )
+
+            # 64-bit safe: preserve full pointer width when reading/writing WndProc
+            user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+            user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+            user32.CallWindowProcW.restype   = ctypes.c_ssize_t
+            user32.CallWindowProcW.argtypes  = [
+                ctypes.c_ssize_t, wintypes.HWND,
+                wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+            ]
+
+            old_proc = user32.GetWindowLongPtrW(hwnd, GWL_WNDPROC)
+
+            def wnd_proc(hwnd, msg, wparam, lparam):
+                if msg == WM_ERASEBKGND:
+                    # Fill with app background color to prevent white flash on minimize/maximize
+                    rc = wintypes.RECT()
+                    user32.GetClientRect(hwnd, ctypes.byref(rc))
+                    brush = ctypes.windll.gdi32.CreateSolidBrush(0x00252525)  # --bg-page
+                    user32.FillRect(wparam, ctypes.byref(rc), brush)
+                    ctypes.windll.gdi32.DeleteObject(brush)
+                    return 1
+                if msg == WM_NCCALCSIZE and wparam:
+                    return 0  # no non-client area → no DWM accent border
+                if msg == WM_NCHITTEST:
+                    x = ctypes.c_short(lparam & 0xFFFF).value
+                    y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+                    rc = wintypes.RECT()
+                    user32.GetWindowRect(hwnd, ctypes.byref(rc))
+                    l = x - rc.left   < RESIZE_BORDER
+                    r = rc.right  - x < RESIZE_BORDER
+                    t = y - rc.top    < RESIZE_BORDER
+                    b = rc.bottom - y < RESIZE_BORDER
+                    if t and l: return HTTOPLEFT
+                    if t and r: return HTTOPRIGHT
+                    if b and l: return HTBOTTOMLEFT
+                    if b and r: return HTBOTTOMRIGHT
+                    if l: return HTLEFT
+                    if r: return HTRIGHT
+                    if t: return HTTOP
+                    if b: return HTBOTTOM
+                    return HTCLIENT
+                return user32.CallWindowProcW(old_proc, hwnd, msg, wparam, lparam)
+
+            proc = WNDPROCTYPE(wnd_proc)
+            user32.SetWindowLongPtrW(hwnd, GWL_WNDPROC, proc)
+            api._wndproc = proc  # prevent garbage collection
+            user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0027)  # SWP_FRAMECHANGED
+        except Exception:
+            pass
+
+    threading.Thread(target=set_window_icon, daemon=True).start()
+
+    win = webview.create_window(
+        'Finance Tracker',
+        f'http://127.0.0.1:{port}',
+        width=1200,
+        height=800,
+        min_size=(800, 600),
+        frameless=True,
+        js_api=api,
+        background_color='#252525',
     )
-    tray = pystray.Icon('Finance Tracker', tray_image, 'Finance Tracker', menu)
-
-    threading.Thread(target=lambda: app.run(debug=False, port=port), daemon=True).start()
-    threading.Timer(1.0, open_browser).start()
-    tray.run()
+    api.set_window(win)
+    # Apply DWM border fix after page load, when WinForms is fully settled
+    win.events.loaded += lambda: threading.Thread(target=fix_border, daemon=True).start()
+    webview.start()
+    os._exit(0)

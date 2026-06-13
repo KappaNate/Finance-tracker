@@ -50,12 +50,44 @@ body {
   background: var(--bg-page);
   color: var(--text-primary);
   font-size: 15px;
+  padding-top: 28px;
 }
+
+/* Custom Title Bar */
+#titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  background: var(--bg-panel);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 1000;
+  user-select: none;
+}
+.titlebar-controls { display: flex; height: 100%; margin-left: auto; align-items: center; gap: 4px; padding-inline: 4px; }
+.titlebar-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 7px;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s;
+}
+.titlebar-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* Header */
 header {
   position: sticky;
-  top: 0;
+  top: 28px;
   z-index: 10;
   background: var(--bg-page);
   max-width: 1100px;

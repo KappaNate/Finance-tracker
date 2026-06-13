@@ -12,6 +12,20 @@
 </head>
 <body>
 
+  <div id="titlebar" onmousedown="titlebarMouseDown(event)">
+    <div class="titlebar-controls">
+      <button class="titlebar-btn" onclick="tbMinimize()" title="Minimize">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+      <button class="titlebar-btn" id="tb-maximize-btn" onclick="tbToggleMaximize()" title="Maximize">
+        <svg id="tb-max-icon" width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="1.75" y="1.75" width="8.5" height="8.5" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>
+      </button>
+      <button class="titlebar-btn titlebar-btn-close" onclick="tbClose()" title="Close">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+
   <header>
     <div class="header-inner">
       <h1 class="app-title">Finance Tracker</h1>
@@ -76,6 +90,7 @@
             <button class="gear-dropdown-item" onclick="openModal('modal-about')">About</button>
           </div>
         </div>
+
       </div>
     </div>
   </header>
@@ -1626,18 +1641,9 @@
           <div class="db-list-actions">
             <button class="btn-small" onclick="toggleRename('rename-form-{{ loop.index }}')">Rename</button>
             <a href="/download_db?file={{ db.file }}" class="btn-small" style="text-decoration:none;">Download</a>
-            {% if db.file != active_db_file %}
-            <form action="/switch_db" method="POST" style="display:inline">
-              <input type="hidden" name="file" value="{{ db.file }}">
-              <button type="submit" class="btn-small">Switch</button>
-            </form>
-            {% endif %}
             {% if db_registry.databases|length > 1 %}
-            <form action="/delete_db" method="POST" style="display:inline"
-                  onsubmit="return confirm('Permanently delete this database and its file?')">
-              <input type="hidden" name="file" value="{{ db.file }}">
-              <button type="submit" class="btn-small danger">Delete</button>
-            </form>
+            <button type="button" class="btn-small danger"
+                    onclick="openDeleteDbConfirm('{{ db.file }}', '{{ db.name }}')">Delete</button>
             {% endif %}
           </div>
         </div>
@@ -1807,6 +1813,41 @@
   </div>
   <div id="cal-tooltip" class="cal-tooltip"></div>
 
+  <!-- Delete DB: step 1 -->
+  <div id="modal-delete-db-1" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>Delete Database</h3>
+      <div style="padding:16px 0 8px">
+        <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:12px">You are about to permanently delete:</p>
+        <p id="delete-db-name-1" style="font-weight:700;font-size:1.05rem;color:var(--text-primary);padding:8px 12px;background:var(--bg-form);border:1px solid var(--border-inner);border-radius:8px;margin-bottom:12px"></p>
+        <p style="color:var(--text-muted);font-size:0.88rem">All data in this database will be lost. This cannot be undone.</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeModal('modal-delete-db-1')">Cancel</button>
+        <button type="button" onclick="deleteDbStep2()">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete DB: step 2 -->
+  <div id="modal-delete-db-2" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>Are you absolutely sure?</h3>
+      <div style="padding:16px 0 8px">
+        <p style="color:var(--text-muted);font-size:0.88rem;margin-bottom:10px">The database <strong id="delete-db-name-2" style="color:var(--text-primary)"></strong> and its file will be permanently removed from your device. There is no way to recover it after this point.</p>
+        <p style="color:var(--red);font-size:0.85rem;font-weight:600">This action is irreversible.</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeModal('modal-delete-db-2')">Cancel</button>
+        <button type="button" class="btn-danger-confirm" onclick="deleteDbConfirm()">Delete Permanently</button>
+      </div>
+    </div>
+  </div>
+
+  <form id="form-delete-db" action="/delete_db" method="POST" style="display:none">
+    <input type="hidden" name="file" id="delete-db-file">
+  </form>
+
   <div id="modal-about" class="modal-overlay hidden" onclick="closeOnOverlay(event,'modal-about')">
     <div class="modal">
       <h3>About Finance Tracker</h3>
@@ -1824,6 +1865,7 @@
       </div>
     </div>
   </div>
+
 
   <div id="modal-user-guide" class="modal-overlay hidden" onclick="closeOnOverlay(event,'modal-user-guide')">
     <div class="modal modal-wide">
@@ -1970,6 +2012,7 @@
           <p>Settings also includes an <strong>Accent Color</strong> picker and a <strong>Border Color</strong> picker for personalising the app's appearance. Accent Color controls the highlight color used for active elements and labels throughout the interface; Border Color controls the shade of dividers and panel borders. Both have a Reset button to return to the default colors. These preferences are saved locally within the app and are device-specific — they do not carry over when switching devices or reinstalling the app.</p>
           <p style="margin-top:6px;">Open <strong>Report Generator</strong> from the gear menu to export data to <strong>CSV</strong> or <strong>PDF</strong> — choose which months, accounts, and categories to include, optionally include individual transactions, then click Download.</p>
         </div>
+
 
       </div>
       <div class="modal-actions" style="margin-top:16px;">
@@ -3307,6 +3350,22 @@
       body.classList.toggle('hidden');
       if(ch) ch.textContent=body.classList.contains('hidden')?'▶':'▼';
     }
+    var _deleteDbFile = '', _deleteDbName = '';
+    function openDeleteDbConfirm(file, name) {
+      _deleteDbFile = file; _deleteDbName = name;
+      document.getElementById('delete-db-name-1').textContent = name;
+      openModal('modal-delete-db-1');
+    }
+    function deleteDbStep2() {
+      closeModal('modal-delete-db-1');
+      document.getElementById('delete-db-name-2').textContent = _deleteDbName;
+      openModal('modal-delete-db-2');
+    }
+    function deleteDbConfirm() {
+      document.getElementById('delete-db-file').value = _deleteDbFile;
+      document.getElementById('form-delete-db').submit();
+    }
+
     function openModal(id) {
       const overlay = document.getElementById(id);
       if (!overlay) return;
@@ -3676,6 +3735,42 @@
     if (!localStorage.getItem('budget_guide_seen')) {
       localStorage.setItem('budget_guide_seen', '1');
       openModal('modal-user-guide');
+    }
+
+    // --- Custom title bar ---
+    var _tbMaximized = false;
+
+    function titlebarMouseDown(e) {
+      if (e.button !== 0) return;
+      if (e.target.closest('.titlebar-btn')) return;
+      if (window.pywebview) window.pywebview.api.start_drag();
+    }
+
+    document.getElementById('titlebar').addEventListener('dblclick', function(e) {
+      if (!e.target.closest('.titlebar-btn')) tbToggleMaximize();
+    });
+
+    function tbMinimize() {
+      if (window.pywebview) window.pywebview.api.minimize();
+    }
+
+    function tbToggleMaximize() {
+      if (!window.pywebview) return;
+      window.pywebview.api.toggle_maximize();
+      _tbMaximized = !_tbMaximized;
+      var btn = document.getElementById('tb-maximize-btn');
+      var icon = document.getElementById('tb-max-icon');
+      if (_tbMaximized) {
+        btn.title = 'Restore';
+        icon.innerHTML = '<rect x="3.75" y="1.75" width="6.5" height="6.5" rx="1" stroke="currentColor" stroke-width="1.5"/><path d="M1.75 4.25v6h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>';
+      } else {
+        btn.title = 'Maximize';
+        icon.innerHTML = '<rect x="1.75" y="1.75" width="8.5" height="8.5" rx="1" stroke="currentColor" stroke-width="1.5"/>';
+      }
+    }
+
+    function tbClose() {
+      if (window.pywebview) window.pywebview.api.close();
     }
   </script>
 

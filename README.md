@@ -21,7 +21,6 @@ A locally-hosted personal finance and budgeting app. Track income, expenses, sav
 ## Requirements
 
 - Python 3.8 or higher
-- A modern web browser
 
 ## Installation
 
@@ -49,7 +48,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Then open your browser and go to: **http://localhost:5000**
+The app will open in its own window automatically.
 
 The app opens with an example database pre-loaded so you can explore the layout right away. When you're ready, create your own database from the toolbar at the top of the page.
 

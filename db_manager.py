@@ -5,6 +5,7 @@ State is persisted to databases.json in the app folder.
 
 import json
 import os
+import shutil
 import sys
 
 def _app_dir():
@@ -17,12 +18,36 @@ def _app_dir():
 
 REGISTRY = os.path.join(_app_dir(), "databases.json")
 
+def _bundle_path(filename):
+    """Return path to a file bundled by PyInstaller, or None if not frozen/missing."""
+    base = getattr(sys, '_MEIPASS', None)
+    if base is None:
+        return None
+    path = os.path.join(base, filename)
+    return path if os.path.exists(path) else None
+
+def _seed_from_bundle():
+    """On first install, copy bundled databases.json and .db files to AppData."""
+    bundled_registry = _bundle_path('databases.json')
+    if not bundled_registry:
+        return
+    with open(bundled_registry, 'r') as f:
+        data = json.load(f)
+    _save(data)
+    data_dir = _app_dir()
+    for db in data.get('databases', []):
+        src = _bundle_path(db['file'])
+        dst = os.path.join(data_dir, db['file'])
+        if src and not os.path.exists(dst):
+            shutil.copy2(src, dst)
+
 def _load():
+    if not os.path.exists(REGISTRY):
+        _seed_from_bundle()
     if not os.path.exists(REGISTRY):
         data = {"active": "budget.db",
                 "databases": [{"name": "Default", "file": "budget.db"}]}
         _save(data)
-        return data
     with open(REGISTRY, "r") as f:
         return json.load(f)
 
