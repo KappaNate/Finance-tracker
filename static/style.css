@@ -66,8 +66,9 @@ body {
   justify-content: space-between;
   z-index: 1000;
   user-select: none;
+  -webkit-app-region: drag;
 }
-.titlebar-controls { display: flex; height: 100%; margin-left: auto; align-items: center; gap: 4px; padding-inline: 4px; }
+.titlebar-controls { display: flex; height: 100%; margin-left: auto; align-items: center; gap: 4px; padding-inline: 4px; -webkit-app-region: no-drag; }
 .titlebar-btn {
   width: 20px;
   height: 20px;

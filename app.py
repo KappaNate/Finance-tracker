@@ -10,7 +10,7 @@ import sys
 import threading
 import calendar
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.2"
 
 def resource_path(relative_path):
     """Get absolute path — works for dev and PyInstaller bundles."""
@@ -23,6 +23,10 @@ app = Flask(
     static_folder=resource_path('static'),
 )
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+
+_PREFS_DIR = os.path.join(os.path.expanduser('~'), '.budget_app')
+os.makedirs(_PREFS_DIR, exist_ok=True)
+_GUIDE_FLAG = os.path.join(_PREFS_DIR, 'guide_shown')
 
 def _activate_db():
     active_file = db_manager.get_active_file()
@@ -614,6 +618,10 @@ def index():
     active_db_file = db_manager.get_active_file()
     active_db_path = db_manager.get_db_path(active_db_file)
 
+    show_guide = not os.path.exists(_GUIDE_FLAG)
+    if show_guide:
+        open(_GUIDE_FLAG, 'w').close()
+
     return render_template("index.html",
         year=year, month=month,
         month_label=date(year, month, 1).strftime("%B %Y"),
@@ -639,6 +647,7 @@ def index():
         active_db_path=active_db_path,
         calendar_events=calendar_events,
         app_version=APP_VERSION,
+        show_guide=show_guide,
     )
 
 # ── Notes API ────────────────────────────────────────────────────────────────
@@ -1258,29 +1267,39 @@ if __name__ == "__main__":
             self._win = win
 
         def minimize(self):
-            if self._win:
-                self._win.minimize()
-
-        def toggle_maximize(self):
-            if not self._win:
-                return
-            if self._maximized:
-                self._win.restore()
-                self._maximized = False
-            else:
-                self._win.maximize()
-                self._maximized = True
-
-        def close(self):
-            if self._win:
-                self._win.destroy()
-
-        def start_drag(self):
             import ctypes
             hwnd = ctypes.windll.user32.FindWindowW(None, 'Finance Tracker')
             if hwnd:
-                ctypes.windll.user32.ReleaseCapture()
-                ctypes.windll.user32.SendMessageW(hwnd, 0x00A1, 2, 0)
+                ctypes.windll.user32.PostMessageW(hwnd, 0x0112, 0xF020, 0)  # WM_SYSCOMMAND SC_MINIMIZE
+
+        def toggle_maximize(self):
+            import ctypes
+            hwnd = ctypes.windll.user32.FindWindowW(None, 'Finance Tracker')
+            if not hwnd:
+                return
+            if self._maximized:
+                ctypes.windll.user32.PostMessageW(hwnd, 0x0112, 0xF120, 0)  # SC_RESTORE
+                self._maximized = False
+            else:
+                ctypes.windll.user32.PostMessageW(hwnd, 0x0112, 0xF030, 0)  # SC_MAXIMIZE
+                self._maximized = True
+
+        def close(self):
+            import ctypes
+            hwnd = ctypes.windll.user32.FindWindowW(None, 'Finance Tracker')
+            if hwnd:
+                ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+
+        def start_drag(self):
+            import ctypes, ctypes.wintypes
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, 'Finance Tracker')
+            if hwnd:
+                pt = ctypes.wintypes.POINT()
+                user32.GetCursorPos(ctypes.byref(pt))
+                lp = (pt.y << 16) | (pt.x & 0xFFFF)
+                user32.ReleaseCapture()
+                user32.PostMessageW(hwnd, 0x00A1, 2, lp)  # WM_NCLBUTTONDOWN HTCAPTION
 
     api = WindowAPI()
 
@@ -1309,15 +1328,26 @@ if __name__ == "__main__":
                 user32.SendMessageW(hwnd, 0x0080, 1, hIconBig)
                 user32.SetClassLongPtrW(hwnd, -14, hIconBig)
                 user32.SetClassLongPtrW(hwnd, -34, hIconSmall)
-                # Re-enable resize/maximize since frameless removes them
+                # Re-enable resize/maximize/caption since frameless removes them.
+                # WS_CAPTION (0xC00000) is required for Aero Snap detection by DWM;
+                # it has no visual effect because WM_NCCALCSIZE keeps NC area at 0.
                 GWL_STYLE = -16
                 cur_style = user32.GetWindowLongW(hwnd, GWL_STYLE)
-                user32.SetWindowLongW(hwnd, GWL_STYLE, cur_style | 0x00070000)
+                user32.SetWindowLongW(hwnd, GWL_STYLE, cur_style | 0x00C70000)
                 user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0027)
+                # Tell DWM this window has a caption after all style changes are done.
+                # A 1px top margin signals Aero Snap; invisible against dark background.
+                class _MARGINS(ctypes.Structure):
+                    _fields_ = [("left", ctypes.c_int), ("right", ctypes.c_int),
+                                 ("top",  ctypes.c_int), ("bottom", ctypes.c_int)]
+                ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(
+                    hwnd, ctypes.byref(_MARGINS(0, 0, 1, 0)))
         except Exception:
             pass
 
     def fix_border():
+        if getattr(api, '_wndproc', None):
+            return  # already installed — don't reinstall on every page reload
         import ctypes, ctypes.wintypes, time
         from ctypes import wintypes
         time.sleep(0.2)
@@ -1327,15 +1357,51 @@ if __name__ == "__main__":
             if not hwnd:
                 return
 
-            WM_ERASEBKGND = 0x0014
-            WM_NCCALCSIZE = 0x0083
-            WM_NCHITTEST  = 0x0084
+            WM_ERASEBKGND  = 0x0014
+            WM_NCCALCSIZE  = 0x0083
+            WM_NCHITTEST   = 0x0084
+            WM_NCLBUTTONDOWN = 0x00A1
             GWL_WNDPROC   = -4
             RESIZE_BORDER = 8
+            HTCAPTION = 2
             HTCLIENT  = 1
             HTLEFT, HTRIGHT = 10, 11
             HTTOP, HTTOPLEFT, HTTOPRIGHT = 12, 13, 14
             HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT = 15, 16, 17
+
+            # DPI-aware title bar hit-test metrics
+            user32.GetDpiForWindow.restype = ctypes.c_uint
+            dpi = user32.GetDpiForWindow(hwnd) or 96
+            dpi_scale = dpi / 96.0
+            TITLEBAR_H_PX    = int(28 * dpi_scale)   # matches CSS height: 28px
+            BUTTON_AREA_W_PX = int(80 * dpi_scale)   # ~76px controls + 4px margin
+
+            # Maximize clipping fix: clamp client rect to the work area
+            WM_NCLBUTTONDOWN = 0x00A1
+            WS_MAXIMIZE = 0x01000000
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize",    wintypes.DWORD),
+                    ("rcMonitor", wintypes.RECT),
+                    ("rcWork",    wintypes.RECT),
+                    ("dwFlags",   wintypes.DWORD),
+                ]
+            class WINDOWPLACEMENT(ctypes.Structure):
+                _fields_ = [
+                    ("length",           ctypes.c_uint),
+                    ("flags",            ctypes.c_uint),
+                    ("showCmd",          ctypes.c_uint),
+                    ("ptMinPosition",    wintypes.POINT),
+                    ("ptMaxPosition",    wintypes.POINT),
+                    ("rcNormalPosition", wintypes.RECT),
+                ]
+            user32.MonitorFromWindow.restype  = ctypes.c_void_p
+            # argtypes required so HMONITOR isn't truncated to 32 bits on 64-bit Windows
+            user32.GetMonitorInfoW.argtypes   = [ctypes.c_void_p, ctypes.POINTER(MONITORINFO)]
+            user32.GetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WINDOWPLACEMENT)]
+            user32.DefWindowProcW.restype     = ctypes.c_ssize_t
+            user32.GetCursorPos.argtypes      = [ctypes.POINTER(wintypes.POINT)]
 
             WNDPROCTYPE = ctypes.WINFUNCTYPE(
                 ctypes.c_long,
@@ -1354,16 +1420,37 @@ if __name__ == "__main__":
 
             old_proc = user32.GetWindowLongPtrW(hwnd, GWL_WNDPROC)
 
+            def _notify_js(script):
+                try:
+                    ctrl = getattr(api, '_webview2_ctrl', None)
+                    if ctrl:
+                        ctrl.ExecuteScriptAsync(script)
+                except Exception:
+                    pass
+
             def wnd_proc(hwnd, msg, wparam, lparam):
                 if msg == WM_ERASEBKGND:
                     # Fill with app background color to prevent white flash on minimize/maximize
                     rc = wintypes.RECT()
                     user32.GetClientRect(hwnd, ctypes.byref(rc))
                     brush = ctypes.windll.gdi32.CreateSolidBrush(0x00252525)  # --bg-page
-                    user32.FillRect(wparam, ctypes.byref(rc), brush)
+                    user32.FillRect(ctypes.c_void_p(wparam), ctypes.byref(rc), brush)
                     ctypes.windll.gdi32.DeleteObject(brush)
                     return 1
                 if msg == WM_NCCALCSIZE and wparam:
+                    # When maximized, constrain client rect to work area so content
+                    # doesn't extend into the off-screen shadow/border region.
+                    if user32.GetWindowLongW(hwnd, -16) & WS_MAXIMIZE:
+                        hMon = user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+                        if hMon:
+                            mi = MONITORINFO()
+                            mi.cbSize = ctypes.sizeof(MONITORINFO)
+                            user32.GetMonitorInfoW(hMon, ctypes.byref(mi))
+                            rc = ctypes.cast(lparam, ctypes.POINTER(wintypes.RECT))
+                            rc[0].left   = mi.rcWork.left
+                            rc[0].top    = mi.rcWork.top
+                            rc[0].right  = mi.rcWork.right
+                            rc[0].bottom = mi.rcWork.bottom
                     return 0  # no non-client area → no DWM accent border
                 if msg == WM_NCHITTEST:
                     x = ctypes.c_short(lparam & 0xFFFF).value
@@ -1382,17 +1469,135 @@ if __name__ == "__main__":
                     if r: return HTRIGHT
                     if t: return HTTOP
                     if b: return HTBOTTOM
+                    # Title bar non-button area → HTCAPTION enables native drag and Aero Snap
+                    if (y - rc.top) < TITLEBAR_H_PX:
+                        if (x - rc.left) < (rc.right - rc.left) - BUTTON_AREA_W_PX:
+                            return HTCAPTION
                     return HTCLIENT
+                # -webkit-app-region: drag on #titlebar makes WebView2 emit
+                # WM_NCLBUTTONDOWN HTCAPTION for title bar clicks.  DefWindowProc
+                # enters a native SC_MOVE drag loop, which lets DWM show Snap Layouts.
+                # If the window is maximized when the drag starts, restore it first
+                # (no-flash: clear WS_MAXIMIZE + SetWindowPos atomically) so the
+                # native move loop anchors at the correct position under the cursor.
+                if msg == WM_NCLBUTTONDOWN and wparam == HTCAPTION:
+                    if user32.GetWindowLongW(hwnd, -16) & WS_MAXIMIZE:
+                        _pt = wintypes.POINT()
+                        user32.GetCursorPos(ctypes.byref(_pt))
+                        _wp = WINDOWPLACEMENT()
+                        _wp.length = ctypes.sizeof(WINDOWPLACEMENT)
+                        user32.GetWindowPlacement(hwnd, ctypes.byref(_wp))
+                        _ww = _wp.rcNormalPosition.right  - _wp.rcNormalPosition.left
+                        _wh = _wp.rcNormalPosition.bottom - _wp.rcNormalPosition.top
+                        _hm = user32.MonitorFromWindow(hwnd, 2)
+                        if _hm:
+                            _mi = MONITORINFO()
+                            _mi.cbSize = ctypes.sizeof(MONITORINFO)
+                            user32.GetMonitorInfoW(_hm, ctypes.byref(_mi))
+                            _wl = _mi.rcWork.left;  _wt = _mi.rcWork.top
+                            _wr = _mi.rcWork.right; _wb = _mi.rcWork.bottom
+                        else:
+                            _wl = _wt = 0; _wr = 1920; _wb = 1080
+                        _gr = (_pt.x - _wl) / max(1, _wr - _wl)
+                        _nx = max(_wl, min(int(_pt.x - _gr * _ww), _wr - _ww))
+                        _ny = max(_wt, min(_pt.y - TITLEBAR_H_PX // 2, _wb - _wh))
+                        _sty = user32.GetWindowLongW(hwnd, -16)
+                        user32.SetWindowLongW(hwnd, -16, _sty & ~WS_MAXIMIZE)
+                        user32.SetWindowPos(hwnd, None, _nx, _ny, _ww, _wh,
+                                            0x0004 | 0x0020)
+                        api._maximized = False
+                        _notify_js('tbSetMaximized(false)')
+                    return user32.CallWindowProcW(old_proc, hwnd, msg, wparam, lparam)
+                if msg == 0x00A5 and wparam == HTCAPTION:  # WM_NCRBUTTONUP — suppress system menu
+                    return 0
+                if msg == 0x0112:  # WM_SYSCOMMAND
+                    _sc = wparam & 0xFFF0
+                    if _sc == 0xF010:  # SC_MOVE safety net (window still maximized somehow)
+                        if user32.GetWindowLongW(hwnd, -16) & WS_MAXIMIZE:
+                            _pt = wintypes.POINT()
+                            user32.GetCursorPos(ctypes.byref(_pt))
+                            _wp = WINDOWPLACEMENT()
+                            _wp.length = ctypes.sizeof(WINDOWPLACEMENT)
+                            user32.GetWindowPlacement(hwnd, ctypes.byref(_wp))
+                            _ww = _wp.rcNormalPosition.right  - _wp.rcNormalPosition.left
+                            _wh = _wp.rcNormalPosition.bottom - _wp.rcNormalPosition.top
+                            _hm = user32.MonitorFromWindow(hwnd, 2)
+                            if _hm:
+                                _mi = MONITORINFO()
+                                _mi.cbSize = ctypes.sizeof(MONITORINFO)
+                                user32.GetMonitorInfoW(_hm, ctypes.byref(_mi))
+                                _wl = _mi.rcWork.left;  _wt = _mi.rcWork.top
+                                _wr = _mi.rcWork.right; _wb = _mi.rcWork.bottom
+                            else:
+                                _wl = _wt = 0; _wr = 1920; _wb = 1080
+                            _gr = (_pt.x - _wl) / max(1, _wr - _wl)
+                            _nx = max(_wl, min(int(_pt.x - _gr * _ww), _wr - _ww))
+                            _ny = max(_wt, min(_pt.y - TITLEBAR_H_PX // 2, _wb - _wh))
+                            _sty = user32.GetWindowLongW(hwnd, -16)
+                            user32.SetWindowLongW(hwnd, -16, _sty & ~WS_MAXIMIZE)
+                            user32.SetWindowPos(hwnd, None, _nx, _ny, _ww, _wh,
+                                                0x0004 | 0x0020)
+                            api._maximized = False
+                            _notify_js('tbSetMaximized(false)')
+                            _new_lp = ((_pt.y & 0xFFFF) << 16) | (_pt.x & 0xFFFF)
+                            return user32.CallWindowProcW(old_proc, hwnd, msg, wparam,
+                                                          _new_lp)
+                    elif _sc == 0xF030:  # SC_MAXIMIZE (snap, double-click, etc.)
+                        result = user32.CallWindowProcW(old_proc, hwnd, msg, wparam, lparam)
+                        api._maximized = True
+                        _notify_js('tbSetMaximized(true)')
+                        return result
+                    elif _sc == 0xF120:  # SC_RESTORE
+                        result = user32.CallWindowProcW(old_proc, hwnd, msg, wparam, lparam)
+                        api._maximized = False
+                        _notify_js('tbSetMaximized(false)')
+                        return result
+                if msg == 0x0232:  # WM_EXITSIZEMOVE — sync state after any native drag/snap
+                    _is_max = bool(user32.GetWindowLongW(hwnd, -16) & WS_MAXIMIZE)
+                    if _is_max != api._maximized:
+                        api._maximized = _is_max
+                        _notify_js('tbSetMaximized(true)' if _is_max else 'tbSetMaximized(false)')
+                    return user32.CallWindowProcW(old_proc, hwnd, msg, wparam, lparam)
                 return user32.CallWindowProcW(old_proc, hwnd, msg, wparam, lparam)
 
             proc = WNDPROCTYPE(wnd_proc)
             user32.SetWindowLongPtrW(hwnd, GWL_WNDPROC, proc)
             api._wndproc = proc  # prevent garbage collection
             user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0027)  # SWP_FRAMECHANGED
+
+            # Cache WebView2 control for fire-and-forget ExecuteScriptAsync calls
+            # from within wnd_proc (can't use evaluate_js there — it blocks the UI
+            # thread on a semaphore waiting for a WebView2 callback that needs the
+            # same UI thread to deliver it → 5-second deadlock).
+            try:
+                from webview.platforms.winforms import BrowserView as _BVClass
+                for _bv in _BVClass.instances.values():
+                    api._webview2_ctrl = _bv.browser.webview
+                    break
+            except Exception:
+                pass
+
         except Exception:
             pass
 
     threading.Thread(target=set_window_icon, daemon=True).start()
+
+    # Enable -webkit-app-region: drag CSS support in WebView2.
+    # pywebview never sets IsNonClientRegionSupportEnabled; without it the
+    # CSS property is silently ignored and no WM_NCLBUTTONDOWN is emitted.
+    # Patch before create_window so the hook is installed before WebView2 init.
+    try:
+        from webview.platforms.edgechromium import EdgeChrome as _EC
+        _orig_wv_ready = _EC.on_webview_ready
+        def _patched_wv_ready(self, sender, args):
+            try:
+                sender.CoreWebView2.Settings.IsNonClientRegionSupportEnabled = True
+            except Exception:
+                pass
+            _orig_wv_ready(self, sender, args)
+        _EC.on_webview_ready = _patched_wv_ready
+    except Exception:
+        pass
 
     win = webview.create_window(
         'Finance Tracker',

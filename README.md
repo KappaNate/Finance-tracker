@@ -21,6 +21,8 @@ A locally-hosted personal finance and budgeting app. Track income, expenses, sav
 ## Requirements
 
 - Python 3.8 or higher
+- Windows 10 or higher
+- [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) — pre-installed on most Windows 10/11 machines; if missing, download the Evergreen Bootstrapper from the link
 
 ## Installation
 

@@ -12,7 +12,7 @@
 </head>
 <body>
 
-  <div id="titlebar" onmousedown="titlebarMouseDown(event)">
+  <div id="titlebar">
     <div class="titlebar-controls">
       <button class="titlebar-btn" onclick="tbMinimize()" title="Minimize">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -3732,41 +3732,34 @@
       });
     })();
 
-    if (!localStorage.getItem('budget_guide_seen')) {
-      localStorage.setItem('budget_guide_seen', '1');
-      openModal('modal-user-guide');
-    }
+    {% if show_guide %}
+    openModal('modal-user-guide');
+    {% endif %}
 
     // --- Custom title bar ---
     var _tbMaximized = false;
-
-    function titlebarMouseDown(e) {
-      if (e.button !== 0) return;
-      if (e.target.closest('.titlebar-btn')) return;
-      if (window.pywebview) window.pywebview.api.start_drag();
-    }
-
-    document.getElementById('titlebar').addEventListener('dblclick', function(e) {
-      if (!e.target.closest('.titlebar-btn')) tbToggleMaximize();
-    });
 
     function tbMinimize() {
       if (window.pywebview) window.pywebview.api.minimize();
     }
 
-    function tbToggleMaximize() {
-      if (!window.pywebview) return;
-      window.pywebview.api.toggle_maximize();
-      _tbMaximized = !_tbMaximized;
+    function tbSetMaximized(isMax) {
+      _tbMaximized = isMax;
       var btn = document.getElementById('tb-maximize-btn');
       var icon = document.getElementById('tb-max-icon');
-      if (_tbMaximized) {
+      if (isMax) {
         btn.title = 'Restore';
         icon.innerHTML = '<rect x="3.75" y="1.75" width="6.5" height="6.5" rx="1" stroke="currentColor" stroke-width="1.5"/><path d="M1.75 4.25v6h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>';
       } else {
         btn.title = 'Maximize';
         icon.innerHTML = '<rect x="1.75" y="1.75" width="8.5" height="8.5" rx="1" stroke="currentColor" stroke-width="1.5"/>';
       }
+    }
+
+    function tbToggleMaximize() {
+      if (!window.pywebview) return;
+      window.pywebview.api.toggle_maximize();
+      tbSetMaximized(!_tbMaximized);
     }
 
     function tbClose() {
