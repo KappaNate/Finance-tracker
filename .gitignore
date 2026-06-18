@@ -12,6 +12,7 @@ venv/
 
 # Logs
 *.log
+webview_err.txt
 
 # PyInstaller output
 dist/

@@ -1,20 +1,182 @@
-import sqlite3
+import sqlcipher3
 import os
+import threading
 
-DB_NAME    = "budget.db"
-_active_db = DB_NAME
+def _replace_file(src, dst):
+    """Atomically replace dst with src, falling back to copy+delete on Windows when the
+    destination is held by a handle opened without FILE_SHARE_DELETE."""
+    try:
+        os.replace(src, dst)
+    except PermissionError:
+        import shutil as _shutil
+        _shutil.copy2(src, dst)
+        try: os.remove(src)
+        except OSError: pass
+
+DB_NAME          = "budget.db"
+DEFAULT_KDF_ITER = None   # None = SQLCipher default (PBKDF2-HMAC-SHA512, 256k iterations)
+
+_active_db       = DB_NAME
+_active_key      = None   # None = unencrypted; str = passphrase for current DB
+_active_kdf_iter = None   # None = let SQLCipher use its default (256k)
+
+# Per-thread connection cache: KDF runs once per thread rather than once per query.
+# A global generation counter lets all threads detect a stale connection after a db/key switch.
+_conn_local      = threading.local()
+_cache_generation = 0
+
+class _ConnWrapper:
+    """Proxy for the cached connection; .close() is a no-op to preserve the connection across queries."""
+    __slots__ = ('_c',)
+    def __init__(self, conn):
+        object.__setattr__(self, '_c', conn)
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, '_c'), name)
+    def close(self):
+        pass  # intentional no-op; connection lives until the cache is invalidated
+
+def _invalidate_connection():
+    """Increment the generation counter (invalidates all threads' caches) and close this thread's connection."""
+    global _cache_generation
+    _cache_generation += 1
+    entry = getattr(_conn_local, 'entry', None)
+    if entry is not None:
+        try:
+            entry[0].close()
+        except Exception:
+            pass
+        _conn_local.entry = None
+
+def release_connection():
+    """Close this thread's cached connection. Call before any operation that replaces the DB file on disk."""
+    _invalidate_connection()
 
 def set_active_db(path):
     global _active_db
     _active_db = path
+    _invalidate_connection()
 
 def get_active_db():
     return _active_db
 
+def set_active_key(key):
+    global _active_key
+    _active_key = key or None
+    _invalidate_connection()
+
+def get_active_key():
+    return _active_key
+
+def set_active_kdf_iter(n):
+    global _active_kdf_iter
+    _active_kdf_iter = int(n) if n else None
+    _invalidate_connection()
+
+def get_active_kdf_iter():
+    return _active_kdf_iter
+
+def _escape_key(key):
+    return key.replace("'", "''")
+
+def _apply_key(conn, key, kdf_iter=None):
+    """Set kdf_iter (if specified) then PRAGMA key on conn."""
+    if kdf_iter:
+        conn.execute(f"PRAGMA kdf_iter = {int(kdf_iter)}")
+    conn.execute(f"PRAGMA key='{_escape_key(key)}'")
+
 def get_connection():
-    conn = sqlite3.connect(_active_db)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Return the cached authenticated connection for this thread, creating it (and running KDF) if needed."""
+    entry = getattr(_conn_local, 'entry', None)
+    # entry is (conn, generation); a generation mismatch means db/key/kdf_iter changed
+    if entry is None or entry[1] != _cache_generation:
+        if entry is not None:
+            try:
+                entry[0].close()
+            except Exception:
+                pass
+        conn = sqlcipher3.connect(_active_db)
+        conn.row_factory = sqlcipher3.Row
+        if _active_key:
+            _apply_key(conn, _active_key, _active_kdf_iter)
+        entry = (conn, _cache_generation)
+        _conn_local.entry = entry
+    return _ConnWrapper(entry[0])
+
+def is_encrypted(path):
+    """Return True if path is an SQLCipher-encrypted database."""
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return False
+    try:
+        conn = sqlcipher3.connect(path)
+        conn.execute("SELECT count(*) FROM sqlite_master")
+        conn.close()
+        return False
+    except Exception:
+        return True
+
+def verify_password(path, key, kdf_iter=None):
+    """Return True if key correctly decrypts the database at path."""
+    try:
+        conn = sqlcipher3.connect(path)
+        _apply_key(conn, key, kdf_iter)
+        conn.execute("SELECT count(*) FROM sqlite_master")
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+def change_db_password(path, current_key, new_key, kdf_iter=None, new_kdf_iter=None):
+    """
+    Add, change, or remove encryption on a database file.
+    current_key:  None/'' for unencrypted, passphrase for encrypted.
+    new_key:      None/'' to remove encryption, passphrase to set/change.
+    kdf_iter:     KDF iterations used to open the current encrypted file (None = SQLCipher default).
+    Returns True on success, False on failure.
+    """
+    tmp = path + '._cipher_tmp'
+    if os.path.exists(tmp):
+        try: os.remove(tmp)
+        except OSError: pass
+    try:
+        if current_key and new_key:
+            # Encrypted → new key: PRAGMA rekey (in-place, no file replacement needed)
+            conn = sqlcipher3.connect(path)
+            _apply_key(conn, current_key, kdf_iter)
+            conn.execute("SELECT count(*) FROM sqlite_master")
+            conn.execute(f"PRAGMA rekey='{_escape_key(new_key)}'")
+            conn.close()
+        elif current_key and not new_key:
+            # Encrypted → plaintext: ATTACH + sqlcipher_export (SQLCipher-recommended approach)
+            escaped_tmp = tmp.replace("'", "''")
+            conn = sqlcipher3.connect(path, isolation_level=None)
+            _apply_key(conn, current_key, kdf_iter)
+            conn.execute("SELECT count(*) FROM sqlite_master")
+            conn.execute(f"ATTACH DATABASE '{escaped_tmp}' AS plaintext KEY ''")
+            conn.execute("SELECT sqlcipher_export('plaintext')").fetchone()
+            conn.execute("DETACH DATABASE plaintext")
+            conn.close()
+            del conn
+            import gc as _gc; _gc.collect()
+            _replace_file(tmp, path)
+        else:
+            # Plaintext → encrypted: ATTACH + sqlcipher_export.
+            # isolation_level=None (autocommit) prevents Python's sqlite3 from wrapping
+            # the export in an implicit BEGIN, which keeps the source file locked on Windows.
+            escaped_tmp = tmp.replace("'", "''")
+            conn = sqlcipher3.connect(path, isolation_level=None)
+            conn.execute(f"ATTACH DATABASE '{escaped_tmp}' AS encrypted KEY '{_escape_key(new_key)}'")
+            conn.execute("SELECT sqlcipher_export('encrypted')").fetchone()
+            conn.execute("DETACH DATABASE encrypted")
+            conn.close()
+            del conn
+            import gc as _gc; _gc.collect()
+            _replace_file(tmp, path)
+        return True
+    except Exception:
+        if os.path.exists(tmp):
+            try: os.remove(tmp)
+            except OSError: pass
+        return False
 
 def init_db():
     conn   = get_connection()

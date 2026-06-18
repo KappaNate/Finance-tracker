@@ -42,7 +42,8 @@
             <form action="/switch_db" method="POST" style="flex:1">
               <input type="hidden" name="file" value="{{ db.file }}">
               <button type="submit" class="custom-select-option db-switch-btn {% if db.file==active_db_file %}active{% endif %}">
-                {{ db.name }}
+                <span>{{ db.name }}</span>
+                {% if db.encrypted %}<svg class="db-lock-svg" viewBox="0 0 24 24" fill="currentColor" title="Password protected" aria-label="Password protected"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>{% endif %}
               </button>
             </form>
           </div>
@@ -1626,7 +1627,8 @@
         {% for db in db_registry.databases %}
         <div class="db-list-row {% if db.file==active_db_file %}db-active-row{% endif %}">
           <div class="db-list-left">
-            <span class="db-list-name">{{ db.name }}
+            <span class="db-list-name">
+              {% if db.encrypted %}<svg class="db-lock-svg-sm" viewBox="0 0 24 24" fill="currentColor" aria-label="Password protected"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg> {% endif %}{{ db.name }}
               {% if db.file==active_db_file %}<span class="db-active-tag">active</span>{% endif %}
             </span>
             <div id="rename-form-{{ loop.index }}" class="rename-inline hidden">
@@ -1641,6 +1643,7 @@
           <div class="db-list-actions">
             <button class="btn-small" onclick="toggleRename('rename-form-{{ loop.index }}')">Rename</button>
             <a href="/download_db?file={{ db.file }}" class="btn-small" style="text-decoration:none;">Download</a>
+            <button class="btn-small" onclick="openDbSecurity('{{ db.file }}', '{{ db.name }}', {{ 'true' if db.encrypted else 'false' }})">Security</button>
             {% if db_registry.databases|length > 1 %}
             <button type="button" class="btn-small danger"
                     onclick="openDeleteDbConfirm('{{ db.file }}', '{{ db.name }}')">Delete</button>
@@ -1848,6 +1851,104 @@
     <input type="hidden" name="file" id="delete-db-file">
   </form>
 
+  <!-- Unlock encrypted database -->
+  <div id="modal-db-unlock" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>Unlock Database</h3>
+      <p style="color:var(--text-muted);font-size:0.88rem;margin-bottom:16px">
+        <strong id="unlock-db-name" style="color:var(--text-primary)"></strong> is password protected. Enter the password to open it.
+      </p>
+      <form action="/db_unlock" method="POST" class="modal-form" id="form-db-unlock">
+        <input type="hidden" name="file" id="unlock-file-input">
+        <label>Password</label>
+        <div style="position:relative;display:flex;align-items:center">
+          <input type="password" name="password" id="unlock-password-input" autocomplete="new-password" required style="flex:1;padding-right:2.2rem">
+          <button type="button" tabindex="-1" onclick="toggleUnlockPw()" style="position:absolute;right:6px;background:none;border:none;cursor:pointer;padding:2px 4px;color:var(--text-muted);font-size:12px" id="unlock-pw-toggle">Show</button>
+        </div>
+        <p id="unlock-error-msg" class="form-error hidden">Incorrect password. Please try again.</p>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel" onclick="closeModal('modal-db-unlock')">Cancel</button>
+          <button type="submit">Unlock</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Database security: add/change/remove password -->
+  <div id="modal-db-security" class="modal-overlay hidden" onclick="closeOnOverlay(event,'modal-db-security')">
+    <div class="modal">
+      <h3 id="db-security-title">Database Security</h3>
+      <p style="color:var(--text-muted);font-size:0.88rem;margin-bottom:16px" id="db-security-desc"></p>
+      <!-- Add password (unencrypted DB) -->
+      <div id="db-security-add">
+        <form action="/db_set_password" method="POST" class="modal-form">
+          <input type="hidden" name="file" id="security-file-add">
+          <label>New Password</label>
+          <input type="password" name="new_password" autocomplete="off" required>
+          <label>Confirm Password</label>
+          <input type="password" id="security-confirm-add" autocomplete="off" required>
+          <p id="security-match-error-add" class="form-error hidden">Passwords do not match.</p>
+          <p id="pw-error-add" class="form-error hidden">Failed to set password. Please try again.</p>
+          <p style="font-size:11px;color:var(--text-muted);margin-top:8px;margin-bottom:0">The database file will be re-encrypted — this may take a moment.</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-cancel" onclick="closeModal('modal-db-security')">Cancel</button>
+            <button type="button" onclick="confirmEncrypt(this.form)">Create Password</button>
+          </div>
+        </form>
+      </div>
+      <!-- Change / remove password (encrypted DB) -->
+      <div id="db-security-manage" class="hidden">
+        <form action="/db_set_password" method="POST" class="modal-form" style="margin-bottom:0">
+          <input type="hidden" name="file" id="security-file-change">
+          <p style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:10px">Change Password</p>
+          <label>Current Password</label>
+          <input type="password" name="current_password" autocomplete="off" required>
+          <label>New Password</label>
+          <input type="password" name="new_password" autocomplete="off" required>
+          <label>Confirm New Password</label>
+          <input type="password" id="security-confirm-change" autocomplete="off" required>
+          <p id="security-match-error-change" class="form-error hidden">Passwords do not match.</p>
+          <p id="pw-error-change" class="form-error hidden">Incorrect current password.</p>
+          <p id="pw-op-error-change" class="form-error hidden">Password change failed. Please try again.</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-cancel" onclick="closeModal('modal-db-security')">Cancel</button>
+            <button type="submit" onclick="return checkPasswordMatch('security-confirm-change','security-match-error-change')">Change Password</button>
+          </div>
+        </form>
+        <hr class="modal-divider">
+        <p style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:10px">Remove Password</p>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:10px">The database will be converted back to a standard unencrypted file.</p>
+        <form action="/db_remove_password" method="POST" class="modal-form">
+          <input type="hidden" name="file" id="security-file-remove">
+          <label>Current Password</label>
+          <input type="password" name="current_password" autocomplete="off" required>
+          <p id="pw-error-remove" class="form-error hidden">Incorrect password.</p>
+          <p id="pw-op-error-remove" class="form-error hidden">Password removal failed. Please try again.</p>
+          <div class="modal-actions">
+            <button type="button" class="btn-cancel" onclick="closeModal('modal-db-security')">Cancel</button>
+            <button type="submit" class="btn-danger-confirm">Remove Password</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-encrypt-confirm" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>Enable Encryption</h3>
+      <p style="margin-bottom:10px">Before continuing, please be aware:</p>
+      <ul style="font-size:13px;line-height:1.7;padding-left:18px;margin-bottom:14px">
+        <li>This database will be encrypted with AES-256. A password will be required every time the app starts.</li>
+        <li><strong>There is no password recovery mechanism.</strong> If you forget your password, the database cannot be opened or recovered.</li>
+        <li>Consider storing the password in a password manager, or keeping a downloaded backup of the unencrypted database.</li>
+      </ul>
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeModal('modal-encrypt-confirm')">Cancel</button>
+        <button type="button" id="encrypt-confirm-btn">I Understand — Create Password</button>
+      </div>
+    </div>
+  </div>
+
   <div id="modal-about" class="modal-overlay hidden" onclick="closeOnOverlay(event,'modal-about')">
     <div class="modal">
       <h3>About Finance Tracker</h3>
@@ -2004,6 +2105,19 @@
         <div class="guide-section">
           <h4>Multiple Databases</h4>
           <p>The database picker in the top-left of the header lets you switch between separate SQLite database files. This is useful for keeping personal and business finances separate, tracking finances in different currencies, or for maintaining an archive. Click <strong>Manage Databases</strong> to create, rename, or delete database files.</p>
+        </div>
+
+        <div class="guide-section">
+          <h4>Database Encryption</h4>
+          <p>Each database can be protected with a password using AES-256 encryption (SQLCipher). To manage a database's password, open <strong>Manage Databases</strong> from the database picker, then click the <strong>Security</strong> button next to the database you want to configure.</p>
+          <ul>
+            <li><strong>Add password</strong> — encrypts the database file. From this point on, the password is required every time the app starts.</li>
+            <li><strong>Change password</strong> — re-encrypts the database with a new password. The current password is required to make this change.</li>
+            <li><strong>Remove password</strong> — decrypts the database back to a standard, unencrypted SQLite file. The current password is required.</li>
+          </ul>
+          <p>When the app starts with an encrypted database, an <strong>Unlock</strong> prompt appears before any data is loaded. If you enter the wrong password, nothing is written or changed — the database remains locked.</p>
+          <p>Your password is only held in memory for the duration of the session and is never written to disk. Closing the app clears it, so you will be prompted again on the next launch.</p>
+          <p><strong>Important:</strong> there is no password recovery mechanism. If you forget your password, the database cannot be opened. Keep a backup of the unencrypted database or store the password somewhere safe before enabling encryption.</p>
         </div>
 
         <div class="guide-section">
@@ -3366,17 +3480,108 @@
       document.getElementById('form-delete-db').submit();
     }
 
+    function openDbSecurity(file, name, isEncrypted) {
+      document.getElementById('db-security-title').textContent = name + ' — Security';
+      if (isEncrypted) {
+        document.getElementById('db-security-desc').textContent = 'This database is password protected. You can change or remove its password below.';
+        document.getElementById('db-security-add').classList.add('hidden');
+        document.getElementById('db-security-manage').classList.remove('hidden');
+        document.getElementById('security-file-change').value = file;
+        document.getElementById('security-file-remove').value = file;
+        var isOurFile = '{{ pw_error_file }}' === file;
+        var pwOp      = '{{ pw_error_op }}';
+        var showPwErr = isOurFile && '{{ pw_error }}' === '1';
+        var showOpErr = isOurFile && '{{ pw_error }}' === '2';
+        document.getElementById('pw-error-change').classList.toggle('hidden', !(showPwErr && pwOp !== 'remove'));
+        document.getElementById('pw-error-remove').classList.toggle('hidden', !(showPwErr && pwOp === 'remove'));
+        document.getElementById('pw-op-error-change').classList.toggle('hidden', !(showOpErr && pwOp !== 'remove'));
+        document.getElementById('pw-op-error-remove').classList.toggle('hidden', !(showOpErr && pwOp === 'remove'));
+      } else {
+        document.getElementById('db-security-desc').textContent = 'This database has no password. Add one to protect it with AES-256 encryption.';
+        document.getElementById('db-security-add').classList.remove('hidden');
+        document.getElementById('db-security-manage').classList.add('hidden');
+        document.getElementById('security-file-add').value = file;
+        var showErr = '{{ pw_error_file }}' === file && ('{{ pw_error }}' === '1' || '{{ pw_error }}' === '2');
+        document.getElementById('pw-error-add').classList.toggle('hidden', !showErr);
+      }
+      openModal('modal-db-security');
+    }
+
+    function toggleUnlockPw() {
+      var f = document.getElementById('unlock-password-input');
+      var b = document.getElementById('unlock-pw-toggle');
+      if (f.type === 'password') { f.type = 'text'; b.textContent = 'Hide'; }
+      else                       { f.type = 'password'; b.textContent = 'Show'; }
+    }
+
+    var _encryptPendingForm = null;
+    function confirmEncrypt(form) {
+      if (!checkPasswordMatch('security-confirm-add', 'security-match-error-add')) return;
+      _encryptPendingForm = form;
+      document.getElementById('encrypt-confirm-btn').onclick = function() {
+        closeModal('modal-encrypt-confirm');
+        _encryptPendingForm.submit();
+        _encryptPendingForm = null;
+      };
+      openModal('modal-encrypt-confirm');
+    }
+
+    function checkPasswordMatch(confirmId, errorId) {
+      var form = document.getElementById(confirmId).closest('form');
+      var newPw = form.querySelector('input[name="new_password"]').value;
+      var confirm = document.getElementById(confirmId).value;
+      if (newPw !== confirm) {
+        document.getElementById(errorId).classList.remove('hidden');
+        return false;
+      }
+      document.getElementById(errorId).classList.add('hidden');
+      return true;
+    }
+
+    // Auto-open unlock modal if redirected with ?unlock=...
+    (function() {
+      var unlockFile = '{{ unlock_file }}';
+      if (!unlockFile) return;
+      var reg = {{ db_registry.databases | tojson }};
+      var db = reg.find(function(d) { return d.file === unlockFile; });
+      if (!db) return;
+      document.getElementById('unlock-db-name').textContent = db.name;
+      document.getElementById('unlock-file-input').value = unlockFile;
+      var hasError = '{{ unlock_error }}' === '1';
+      document.getElementById('unlock-error-msg').classList.toggle('hidden', !hasError);
+      // Force-clear any browser-filled value so autocomplete can't silently pre-fill it
+      var pwField = document.getElementById('unlock-password-input');
+      pwField.value = '';
+      // defer until after layout so the X button positions correctly
+      requestAnimationFrame(function() { openModal('modal-db-unlock'); pwField.focus(); });
+    })();
+
+    // Auto-open security modal if redirected with pw_error
+    (function() {
+      var pwFile = '{{ pw_error_file }}';
+      var pwErr  = '{{ pw_error }}';
+      if (!pwFile || (pwErr !== '1' && pwErr !== '2')) return;
+      var reg = {{ db_registry.databases | tojson }};
+      var db = reg.find(function(d) { return d.file === pwFile; });
+      if (!db) return;
+      openModal('modal-manage-dbs');
+      openDbSecurity(db.file, db.name, db.encrypted);
+    })();
+
     function openModal(id) {
       const overlay = document.getElementById(id);
       if (!overlay) return;
       overlay.classList.remove('hidden');
-      const wrapper = overlay.querySelector('.modal-close-wrapper');
-      const btn = overlay.querySelector('.modal-close-x');
-      if (wrapper && btn) {
-        const rect = wrapper.getBoundingClientRect();
-        btn.style.top  = (rect.top  + 8) + 'px';
-        btn.style.left = (rect.right + 8) + 'px';
-      }
+      // Position the X button after layout is computed for the newly-visible modal
+      requestAnimationFrame(function() {
+        const wrapper = overlay.querySelector('.modal-close-wrapper');
+        const btn = overlay.querySelector('.modal-close-x');
+        if (wrapper && btn) {
+          const rect = wrapper.getBoundingClientRect();
+          btn.style.top  = (rect.top  + 8) + 'px';
+          btn.style.left = (rect.right + 8) + 'px';
+        }
+      });
     }
     function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
     function toggleExportAccount(cb, accountId) {
@@ -3735,6 +3940,19 @@
     {% if show_guide %}
     openModal('modal-user-guide');
     {% endif %}
+
+    // Force a GPU-composite repaint after WebView2 resumes rendering.
+    // visibilitychange fires once the renderer is actually ready (unlike _notify_js
+    // calls during WM_SIZE which fire before the renderer has woken up).
+    // The focus listener catches the same event on older WebView2 builds.
+    function _forceRepaint() {
+      document.body.style.transform = 'translateZ(0)';
+      requestAnimationFrame(function() { document.body.style.transform = ''; });
+    }
+    document.addEventListener('visibilitychange', function() {
+      if (!document.hidden) _forceRepaint();
+    });
+    window.addEventListener('focus', _forceRepaint);
 
     // --- Custom title bar ---
     var _tbMaximized = false;

@@ -51,6 +51,7 @@ body {
   color: var(--text-primary);
   font-size: 15px;
   padding-top: 28px;
+  -webkit-app-region: no-drag;
 }
 
 /* Custom Title Bar */
@@ -277,6 +278,7 @@ tr.expense td:nth-child(7) { color: var(--red);   font-weight: 500; }
   z-index: 1000;
   padding: 2rem 1rem;
   overflow: hidden; /* no scroll here — .modal-close-wrapper handles it */
+  -webkit-app-region: no-drag;
 }
 /* Scroll container: no border-radius, so the scrollbar at its right edge is never clipped */
 .modal-close-wrapper {
@@ -833,7 +835,11 @@ input::placeholder { color: var(--text-muted); }
   border-radius: 99px;
   text-transform: uppercase;
 }
-.db-list-actions { display: flex; gap: 6px; }
+.db-list-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.db-lock-svg { width: 11px; height: 11px; color: var(--accent); flex-shrink: 0; }
+.db-lock-svg-sm { width: 10px; height: 10px; color: var(--accent); flex-shrink: 0; vertical-align: -1px; }
+.db-switch-btn { display: flex !important; align-items: center; justify-content: space-between; gap: 8px; }
+.form-error { color: var(--red); font-size: 0.82rem; margin-top: 4px; margin-bottom: 0; }
 
 /* Interest panel */
 .interest-panel {

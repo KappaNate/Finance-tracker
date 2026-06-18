@@ -3,7 +3,9 @@
   "databases": [
     {
       "name": "Example",
-      "file": "example.db"
+      "file": "example.db",
+      "encrypted": false,
+      "kdf_iter": null
     }
   ]
 }

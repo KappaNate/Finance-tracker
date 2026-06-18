@@ -10,7 +10,7 @@ import sys
 import threading
 import calendar
 
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 
 def resource_path(relative_path):
     """Get absolute path — works for dev and PyInstaller bundles."""
@@ -24,15 +24,31 @@ app = Flask(
 )
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
+@app.errorhandler(Exception)
+def _handle_exception(e):
+    import traceback as _tb_mod
+    _log = os.path.join(_PREFS_DIR, 'error.log')
+    try:
+        with open(_log, 'a') as _f:
+            _f.write(_tb_mod.format_exc() + '\n')
+    except Exception:
+        pass
+    return "An unexpected error occurred. Check error.log in ~/.budget_app for details.", 500
+
 _PREFS_DIR = os.path.join(os.path.expanduser('~'), '.budget_app')
 os.makedirs(_PREFS_DIR, exist_ok=True)
+_db_keys = {}   # db filename → passphrase (in-memory only, cleared on restart)
 _GUIDE_FLAG = os.path.join(_PREFS_DIR, 'guide_shown')
 
 def _activate_db():
     active_file = db_manager.get_active_file()
     db_path     = db_manager.get_db_path(active_file)
     database.set_active_db(db_path)
-    database.init_db()
+    database.set_active_key(_db_keys.get(active_file))
+    database.set_active_kdf_iter(db_manager.get_kdf_iter(active_file))
+    # Skip init_db if the DB is encrypted but not yet unlocked this session
+    if not db_manager.get_encrypted(active_file) or active_file in _db_keys:
+        database.init_db()
 
 _activate_db()
 
@@ -65,8 +81,33 @@ def favicon():
 
 @app.route("/")
 def index():
+    return _index_inner()
+
+def _index_inner():
     now   = datetime.now()
     year, month = get_viewed_month(request)
+
+    # If the active DB is encrypted but not yet unlocked, go straight to unlock
+    active_file = db_manager.get_active_file()
+    if db_manager.get_encrypted(active_file) and active_file not in _db_keys:
+        unlock_file  = request.args.get("unlock", active_file)
+        unlock_error = request.args.get("unlock_error", "")
+        db_registry  = db_manager.get_all()
+        return render_template("index.html",
+            year=year, month=month,
+            month_label=date(year, month, 1).strftime("%B %Y"),
+            month_name=date(year, month, 1).strftime("%B"),
+            year_options=[], current_year_months=[], prev_year=year, prev_month=month,
+            next_year=year, next_month=month, month_options=[],
+            account_data=[], all_categories=[], total_income=0, total_expenses=0,
+            overall_balance=0, total_debt_remaining=0,
+            open_panels="", scroll_to="", currency="$", all_accounts=[],
+            db_registry=db_registry, active_db_name=db_manager.get_active_name(),
+            active_db_file=active_file, active_db_path=db_manager.get_db_path(active_file),
+            calendar_events=[], app_version=APP_VERSION, show_guide=False,
+            unlock_file=unlock_file, unlock_error=unlock_error,
+            pw_error_file="", pw_error="", pw_error_op="",
+        )
 
     database.add_active_month(now.year, now.month)
     database.ensure_debt_accounts_in_month(year, month)
@@ -612,15 +653,27 @@ def index():
                         })
     open_panels     = request.args.get("open", "")
     scroll_to       = request.args.get("scroll_to", "")
+    unlock_file     = request.args.get("unlock", "")
+    unlock_error    = request.args.get("unlock_error", "")
+    pw_error_file   = request.args.get("pw_file", "")
+    pw_error        = request.args.get("pw_error", "")
+    pw_error_op     = request.args.get("pw_op", "")
 
     db_registry    = db_manager.get_all()
     active_db_name = db_manager.get_active_name()
     active_db_file = db_manager.get_active_file()
     active_db_path = db_manager.get_db_path(active_db_file)
 
-    show_guide = not os.path.exists(_GUIDE_FLAG)
+    try:
+        shown_version = open(_GUIDE_FLAG).read().strip()
+    except OSError:
+        shown_version = ''
+    show_guide = shown_version != APP_VERSION
     if show_guide:
-        open(_GUIDE_FLAG, 'w').close()
+        try:
+            open(_GUIDE_FLAG, 'w').write(APP_VERSION)
+        except OSError:
+            pass
 
     return render_template("index.html",
         year=year, month=month,
@@ -648,6 +701,11 @@ def index():
         calendar_events=calendar_events,
         app_version=APP_VERSION,
         show_guide=show_guide,
+        unlock_file=unlock_file,
+        unlock_error=unlock_error,
+        pw_error_file=pw_error_file,
+        pw_error=pw_error,
+        pw_error_op=pw_error_op,
     )
 
 # ── Notes API ────────────────────────────────────────────────────────────────
@@ -674,7 +732,11 @@ def save_settings():
 @app.route("/switch_db", methods=["POST"])
 def switch_db():
     file = request.form.get("file")
-    if file and db_manager.switch(file):
+    if not file:
+        return redirect(url_for("index"))
+    if db_manager.get_encrypted(file) and file not in _db_keys:
+        return redirect(url_for("index", unlock=file))
+    if db_manager.switch(file):
         _activate_db()
     return redirect(url_for("index"))
 
@@ -730,16 +792,129 @@ def import_db():
     custom_name = request.form.get("db_name", "").strip()
     if not uploaded or not uploaded.filename:
         return redirect(url_for("index"))
-    # Derive a display name from the filename if the user left the field blank
     base = os.path.splitext(uploaded.filename)[0]
     name = custom_name if custom_name else base.replace("_", " ").replace("-", " ").title()
     safe = "".join(c for c in name if c.isalnum() or c in " _-").strip()
     filename = safe.replace(" ", "_") + ".db"
     db_path  = db_manager.get_db_path(filename)
     uploaded.save(db_path)
-    db_manager.create(name, filename)
+    enc = database.is_encrypted(db_path)
+    db_manager.create(name, filename, encrypted=enc)
+    if enc:
+        # Switch to it but prompt for unlock before loading
+        db_manager.switch(filename)
+        return redirect(url_for("index", unlock=filename))
     database.set_active_db(db_path)
     database.init_db()
+    return redirect(url_for("index"))
+
+@app.route("/db_unlock", methods=["POST"])
+def db_unlock():
+    file     = request.form.get("file")
+    password = request.form.get("password", "")
+    if not file or not password:
+        return redirect(url_for("index", unlock=file, unlock_error="1"))
+    db_path     = db_manager.get_db_path(file)
+    stored_iter = db_manager.get_kdf_iter(file)
+    probe = [stored_iter] + [n for n in (None, 4000, 64000) if n != stored_iter]
+    _UNSET = object()
+    matched_iter = _UNSET
+    for try_iter in probe:
+        if database.verify_password(db_path, password, kdf_iter=try_iter):
+            matched_iter = try_iter
+            break
+    if matched_iter is _UNSET:
+        return redirect(url_for("index", unlock=file, unlock_error="1"))
+    if matched_iter != stored_iter:
+        db_manager.set_kdf_iter(file, matched_iter)
+    _db_keys[file] = password
+    db_manager.switch(file)
+    _activate_db()
+    return redirect(url_for("index"))
+
+@app.route("/db_set_password", methods=["POST"])
+def db_set_password():
+    file         = request.form.get("file")
+    current_pw   = request.form.get("current_password", "")
+    new_pw       = request.form.get("new_password", "")
+    is_encrypted = db_manager.get_encrypted(file)
+    if not file or not new_pw:
+        return redirect(url_for("index", open="modal-manage-dbs", pw_error="1", pw_file=file))
+    db_path           = db_manager.get_db_path(file)
+    existing_kdf_iter = db_manager.get_kdf_iter(file)
+    if is_encrypted:
+        if file in _db_keys:
+            # Already unlocked this session — compare in memory, no KDF re-run needed
+            if current_pw != _db_keys[file]:
+                return redirect(url_for("index", open="modal-manage-dbs", pw_error="1", pw_file=file))
+        else:
+            # Probe multiple kdf_iter values in case the stored value is stale
+            stored_iter = existing_kdf_iter
+            probe = [stored_iter] + [n for n in (None, 4000) if n != stored_iter]
+            matched = False
+            for try_iter in probe:
+                if database.verify_password(db_path, current_pw, kdf_iter=try_iter):
+                    existing_kdf_iter = try_iter
+                    matched = True
+                    if try_iter != stored_iter:
+                        db_manager.set_kdf_iter(file, try_iter)
+                    break
+            if not matched:
+                return redirect(url_for("index", open="modal-manage-dbs", pw_error="1", pw_file=file))
+    # Password changes keep existing kdf_iter; new encryptions use SQLCipher default
+    new_kdf_iter = existing_kdf_iter if is_encrypted else database.DEFAULT_KDF_ITER
+    database.release_connection()
+    ok = database.change_db_password(
+        db_path, current_pw if is_encrypted else None, new_pw,
+        kdf_iter=existing_kdf_iter, new_kdf_iter=new_kdf_iter
+    )
+    if not ok:
+        return redirect(url_for("index", open="modal-manage-dbs", pw_error="2", pw_file=file, pw_op="set"))
+    _db_keys[file] = new_pw
+    db_manager.set_encrypted(file, True)
+    db_manager.set_kdf_iter(file, new_kdf_iter)
+    if file == db_manager.get_active_file():
+        database.set_active_key(new_pw)
+        database.set_active_kdf_iter(new_kdf_iter)
+    return redirect(url_for("index"))
+
+@app.route("/db_remove_password", methods=["POST"])
+def db_remove_password():
+    file       = request.form.get("file")
+    current_pw = request.form.get("current_password", "")
+    if not file or not current_pw:
+        return redirect(url_for("index", open="modal-manage-dbs", pw_error="1", pw_file=file))
+    db_path = db_manager.get_db_path(file)
+    if file in _db_keys:
+        # Already unlocked this session — compare in memory, no KDF re-run needed
+        if current_pw != _db_keys[file]:
+            return redirect(url_for("index", open="modal-manage-dbs", pw_error="1", pw_file=file))
+        kdf_iter = db_manager.get_kdf_iter(file)
+    else:
+        # Probe multiple kdf_iter values in case the stored value is stale
+        stored_iter = db_manager.get_kdf_iter(file)
+        probe = [stored_iter] + [n for n in (None, 4000) if n != stored_iter]
+        kdf_iter = None
+        matched = False
+        for try_iter in probe:
+            if database.verify_password(db_path, current_pw, kdf_iter=try_iter):
+                kdf_iter = try_iter
+                matched = True
+                if try_iter != stored_iter:
+                    db_manager.set_kdf_iter(file, try_iter)
+                break
+        if not matched:
+            return redirect(url_for("index", open="modal-manage-dbs", pw_error="1", pw_file=file))
+    database.release_connection()
+    ok = database.change_db_password(db_path, current_pw, None, kdf_iter=kdf_iter)
+    if not ok:
+        return redirect(url_for("index", open="modal-manage-dbs", pw_error="2", pw_file=file, pw_op="remove"))
+    _db_keys.pop(file, None)
+    db_manager.set_encrypted(file, False)
+    db_manager.set_kdf_iter(file, None)
+    if file == db_manager.get_active_file():
+        database.set_active_key(None)
+        database.set_active_kdf_iter(None)
     return redirect(url_for("index"))
 
 # ── Export ────────────────────────────────────────────────────────────────────
@@ -1304,7 +1479,7 @@ if __name__ == "__main__":
     api = WindowAPI()
 
     threading.Thread(
-        target=lambda: app.run(debug=False, port=port, use_reloader=False),
+        target=lambda: app.run(debug=False, port=port, use_reloader=False, threaded=False),
         daemon=True
     ).start()
 
@@ -1361,6 +1536,8 @@ if __name__ == "__main__":
             WM_NCCALCSIZE  = 0x0083
             WM_NCHITTEST   = 0x0084
             WM_NCLBUTTONDOWN = 0x00A1
+            WM_SIZE        = 0x0005
+            SIZE_MINIMIZED = 1
             GWL_WNDPROC   = -4
             RESIZE_BORDER = 8
             HTCAPTION = 2
@@ -1368,6 +1545,7 @@ if __name__ == "__main__":
             HTLEFT, HTRIGHT = 10, 11
             HTTOP, HTTOPLEFT, HTTOPRIGHT = 12, 13, 14
             HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT = 15, 16, 17
+            _was_minimized = [False]
 
             # DPI-aware title bar hit-test metrics
             user32.GetDpiForWindow.restype = ctypes.c_uint
@@ -1437,6 +1615,18 @@ if __name__ == "__main__":
                     user32.FillRect(ctypes.c_void_p(wparam), ctypes.byref(rc), brush)
                     ctypes.windll.gdi32.DeleteObject(brush)
                     return 1
+                if msg == WM_SIZE:
+                    prev_min = _was_minimized[0]
+                    _was_minimized[0] = (wparam == SIZE_MINIMIZED)
+                    result = user32.CallWindowProcW(old_proc, hwnd, msg, wparam, lparam)
+                    if prev_min and wparam != SIZE_MINIMIZED:
+                        # Restoring from minimized — tell Windows to recompute the frame
+                        # and flush pending paints.  JS-based repaints won't work here
+                        # because WebView2's renderer is still resuming; the HTML-side
+                        # visibilitychange handler fires once it's actually ready.
+                        user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, 0x0027)  # SWP_FRAMECHANGED|NOZORDER|NOMOVE|NOSIZE
+                        user32.RedrawWindow(hwnd, None, None, 0x0085)  # RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN
+                    return result
                 if msg == WM_NCCALCSIZE and wparam:
                     # When maximized, constrain client rect to work area so content
                     # doesn't extend into the off-screen shadow/border region.
@@ -1606,6 +1796,7 @@ if __name__ == "__main__":
         height=800,
         min_size=(800, 600),
         frameless=True,
+        easy_drag=False,  # disable pywebview's JS mousedown drag — we use WndProc HTCAPTION instead
         js_api=api,
         background_color='#252525',
     )

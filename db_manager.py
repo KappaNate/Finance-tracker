@@ -9,7 +9,7 @@ import shutil
 import sys
 
 def _app_dir():
-    """Return AppData\Roaming\BudgetApp (frozen) or the project folder (dev)."""
+    """Return AppData/Roaming/BudgetApp (frozen) or the project folder (dev)."""
     if getattr(sys, 'frozen', False):
         data_dir = os.path.join(os.environ.get('APPDATA', os.path.dirname(sys.executable)), 'Finance Tracker')
         os.makedirs(data_dir, exist_ok=True)
@@ -46,10 +46,15 @@ def _load():
         _seed_from_bundle()
     if not os.path.exists(REGISTRY):
         data = {"active": "budget.db",
-                "databases": [{"name": "Default", "file": "budget.db"}]}
+                "databases": [{"name": "Default", "file": "budget.db", "encrypted": False}]}
         _save(data)
     with open(REGISTRY, "r") as f:
-        return json.load(f)
+        data = json.load(f)
+    # Back-fill fields for entries created before these features
+    for db in data.get("databases", []):
+        db.setdefault("encrypted", False)
+        db.setdefault("kdf_iter", None)
+    return data
 
 def _save(data):
     with open(REGISTRY, "w") as f:
@@ -76,14 +81,44 @@ def switch(file):
         return True
     return False
 
-def create(name, file):
+def create(name, file, encrypted=False):
     data = _load()
     if any(db["file"] == file for db in data["databases"]):
         return False
-    data["databases"].append({"name": name, "file": file})
+    data["databases"].append({"name": name, "file": file, "encrypted": encrypted})
     data["active"] = file
     _save(data)
     return True
+
+def set_encrypted(file, is_enc):
+    data = _load()
+    for db in data["databases"]:
+        if db["file"] == file:
+            db["encrypted"] = bool(is_enc)
+            break
+    _save(data)
+
+def get_encrypted(file):
+    data = _load()
+    for db in data["databases"]:
+        if db["file"] == file:
+            return db.get("encrypted", False)
+    return False
+
+def get_kdf_iter(file):
+    data = _load()
+    for db in data["databases"]:
+        if db["file"] == file:
+            return db.get("kdf_iter", None)
+    return None
+
+def set_kdf_iter(file, kdf_iter):
+    data = _load()
+    for db in data["databases"]:
+        if db["file"] == file:
+            db["kdf_iter"] = kdf_iter
+            break
+    _save(data)
 
 def delete(file):
     data = _load()
