@@ -1,11 +1,11 @@
 [Setup]
 AppName=Finance Tracker
-AppVersion=1.1.3
+AppVersion=1.1.4
 AppPublisher=KappaNate
 DefaultDirName={autopf}\Finance Tracker
 DefaultGroupName=Finance Tracker
 OutputDir=installer
-OutputBaseFilename=FinanceTracker_Setup_1.1.3
+OutputBaseFilename=FinanceTracker_Setup_1.1.4
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
