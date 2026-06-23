@@ -7,10 +7,11 @@ from datetime import datetime, date
 import sqlite3
 import os
 import sys
+import shutil
 import threading
 import calendar
 
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 
 def resource_path(relative_path):
     """Get absolute path — works for dev and PyInstaller bundles."""
@@ -1464,6 +1465,23 @@ if __name__ == "__main__":
             hwnd = ctypes.windll.user32.FindWindowW(None, 'Finance Tracker')
             if hwnd:
                 ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+
+        def download_db(self, file):
+            if not self._win or not file:
+                return {'ok': False}
+            db_path = db_manager.get_db_path(file)
+            if not os.path.exists(db_path):
+                return {'ok': False}
+            dest = self._win.create_file_dialog(
+                webview.FileDialog.SAVE, directory='', save_filename=file,
+                file_types=('Database Files (*.db)', 'All files (*.*)')
+            )
+            if isinstance(dest, (list, tuple)):
+                dest = dest[0] if dest else None
+            if not dest:
+                return {'ok': False}
+            shutil.copy2(db_path, dest)
+            return {'ok': True}
 
         def start_drag(self):
             import ctypes, ctypes.wintypes

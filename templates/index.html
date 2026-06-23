@@ -317,7 +317,7 @@
             <div class="folder-title">
               <span class="chevron" id="chevron-folder-{{ folder.id }}">▶</span>
               <span class="drag-handle folder-drag" onclick="event.stopPropagation()">⠿</span>
-              <span class="folder-icon">📁</span>
+              <span class="cat-type-badge folder-badge">Folder</span>
               <strong>{{ folder.name }}</strong>
               {% if folder.has_pending %}<span class="pending-header-badge">Pending</span>{% endif %}
             </div>
@@ -345,7 +345,6 @@
             <div class="category-title">
               <span class="chevron" id="chevron-cat-{{ cat.id }}">▶</span>
               <span class="drag-handle cat-drag" onclick="event.stopPropagation()">⠿</span>
-              <strong>{{ cat.name }}</strong>
               {% if cat.category_type == 'transfer' %}<span class="cat-type-badge transfer">Transfer</span>
               {% elif cat.category_type == 'income' %}<span class="cat-type-badge income-badge">Income</span>
               {% elif cat.category_type == 'interest' %}<span class="cat-type-badge interest-badge">Interest</span>
@@ -354,6 +353,7 @@
               {% elif cat.category_type == 'investment' %}<span class="cat-type-badge invest-badge">Investment</span>
               {% elif cat.category_type == 'reserve' %}<span class="cat-type-badge reserve-badge">Reserve</span>
               {% endif %}
+              <strong>{{ cat.name }}</strong>
               {% if cat.has_pending %}<span class="pending-header-badge">Pending</span>{% endif %}
             </div>
             <div class="category-actions">
@@ -916,7 +916,6 @@
             <div class="category-title">
               <span class="chevron" id="chevron-cat-{{ cat.id }}">▶</span>
               <span class="drag-handle cat-drag" onclick="event.stopPropagation()">⠿</span>
-              <strong>{{ cat.name }}</strong>
               {% if cat.category_type == 'transfer' %}<span class="cat-type-badge transfer">Transfer</span>
               {% elif cat.category_type == 'income' %}<span class="cat-type-badge income-badge">Income</span>
               {% elif cat.category_type == 'interest' %}<span class="cat-type-badge interest-badge">Interest</span>
@@ -925,6 +924,7 @@
               {% elif cat.category_type == 'investment' %}<span class="cat-type-badge invest-badge">Investment</span>
               {% elif cat.category_type == 'reserve' %}<span class="cat-type-badge reserve-badge">Reserve</span>
               {% endif %}
+              <strong>{{ cat.name }}</strong>
               {% if cat.has_pending %}<span class="pending-header-badge">Pending</span>{% endif %}
             </div>
             <div class="category-actions">
@@ -1642,7 +1642,7 @@
           </div>
           <div class="db-list-actions">
             <button class="btn-small" onclick="toggleRename('rename-form-{{ loop.index }}')">Rename</button>
-            <a href="/download_db?file={{ db.file }}" class="btn-small" style="text-decoration:none;">Download</a>
+            <button type="button" class="btn-small" onclick="downloadDb('{{ db.file }}')">Download</button>
             <button class="btn-small" onclick="openDbSecurity('{{ db.file }}', '{{ db.name }}', {{ 'true' if db.encrypted else 'false' }})">Security</button>
             {% if db_registry.databases|length > 1 %}
             <button type="button" class="btn-small danger"
@@ -2077,14 +2077,18 @@
         </div>
 
         <div class="guide-section">
-          <h4>Savings &amp; Reserved</h4>
-          <p>Within a Savings (or Checking/Cash) account, you can create <strong>Reserve</strong> categories to carve out dedicated pools of money — for example, an emergency fund or a vacation savings bucket. Each Reserve category has its own starting balance and tracks deposits and withdrawals independently from the rest of the account.</p>
+          <h4>Reserved</h4>
+          <p>For Savings, Checking, or Cash account types, you can create <strong>Reserve</strong> categories to carve out dedicated pools of money — for example, an emergency fund or a vacation savings bucket. Each Reserve category has its own starting balance and tracks deposits and withdrawals independently from the rest of the account.</p>
           <p>The account summary reflects reserved funds in two ways:</p>
           <ul>
             <li><strong>Reserved</strong> — the combined balance of all Reserve categories in the account.</li>
             <li><strong>Unreserved</strong> — the account's net balance minus the total reserved amount, showing what is freely available.</li>
           </ul>
-          <p>Separately, budget categories can be marked as <strong>Annual</strong>. These represent expenses that recur yearly (e.g., insurance, subscriptions). When any annual categories are active, the account summary shows an <strong>Annual Reserved</strong> total — the sum of their budgeted amounts — as a reminder of long-term commitments built into that month's budget. This value is informational and does not reduce any balance.</p>
+        </div>
+
+        <div class="guide-section">
+          <h4>Annual Categories</h4>
+          <p>Budget categories can be marked as <strong>Annual</strong>. These represent expenses that recur yearly (e.g., insurance, subscriptions). When any annual categories are active, the account summary shows an <strong>Annual Reserved</strong> total — the sum of their budgeted amounts — as a reminder of long-term commitments built into that month's budget. This value is informational and does not reduce any balance.</p>
         </div>
 
         <div class="guide-section">
@@ -2802,7 +2806,7 @@
     function scrollToTarget() {
       if (!SCROLL_TO) return;
       const el = document.getElementById(SCROLL_TO);
-      if (el) el.scrollIntoView({ behavior: 'instant', block: 'start' });
+      if (el) el.scrollIntoView({ behavior: 'instant', block: 'center' });
     }
     document.addEventListener('submit', function(e) {
       const form = e.target;
@@ -3169,6 +3173,12 @@
     // ── Rename DB ─────────────────────────────────────────────────────────────
     function toggleRename(id) {
       document.getElementById(id).classList.toggle('hidden');
+    }
+
+    // ── Download DB ───────────────────────────────────────────────────────────
+    async function downloadDb(file) {
+      if (!window.pywebview) return;
+      await window.pywebview.api.download_db(file);
     }
 
     // ── Chart ─────────────────────────────────────────────────────────────────
@@ -3692,7 +3702,7 @@
       // fall back to the saved position so the view doesn't snap to the top.
       if (SCROLL_TO) {
         const el = document.getElementById(SCROLL_TO);
-        if (el) { el.scrollIntoView({ behavior: 'instant', block: 'start' }); return; }
+        if (el) { el.scrollIntoView({ behavior: 'instant', block: 'center' }); return; }
       }
       if (savedY !== null) window.scrollTo(0, parseInt(savedY, 10));
     });

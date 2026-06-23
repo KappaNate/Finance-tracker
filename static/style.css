@@ -713,7 +713,8 @@ input::placeholder { color: var(--text-muted); }
   letter-spacing: 0.05em;
 }
 .cat-type-badge.transfer    { background: var(--accent-bg); color: var(--accent); }
-.cat-type-badge.income-badge { background: rgba(90,158,58,0.2);  color: var(--green); }
+.cat-type-badge.income-badge { background: var(--accent-bg); color: var(--accent); }
+.cat-type-badge.folder-badge { background: var(--accent-bg); color: var(--accent); }
 
 /* Transfer direction indicators */
 .transfer-out { color: var(--red);   font-weight: 600; font-size: 13px; }
@@ -991,7 +992,6 @@ td:last-child { vertical-align: top; }
 .folder-header:hover { background: var(--bg-row-hover); }
 .folder-title { display: flex; align-items: center; gap: 8px; }
 .folder-title strong { font-size: 14px; color: var(--text-primary); }
-.folder-icon { font-size: 14px; }
 .folder-actions { display: flex; align-items: center; gap: 6px; }
 .folder-body {
   padding: 8px 8px 4px;
